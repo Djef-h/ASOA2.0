@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ARCHEO-IOT</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap');
 
@@ -1258,7 +1260,18 @@
     </div>
     <div class="modal-body">
       <div style="margin-bottom:12px">
-        <div class="form-label">Икона</div>
+        <div class="form-label">Снимка</div>
+        <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px">
+          <div id="photo-preview" style="width:80px;height:80px;background:var(--bg3);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:40px;flex-shrink:0;overflow:hidden;"></div>
+          <div style="flex:1">
+            <label for="f-photo" style="display:block;padding:10px;border:1px dashed var(--border);background:var(--bg3);color:#aaa;font-family:var(--font);font-size:10px;text-transform:uppercase;text-align:center;cursor:pointer;transition:border-color 0.2s" onmouseover="this.style.borderColor='var(--cyan)'" onmouseout="this.style.borderColor='var(--border)'">
+              📷 Избери снимка
+            </label>
+            <input type="file" id="f-photo" accept="image/*" style="display:none" onchange="handlePhotoUpload(event)">
+            <div style="font-size:9px;color:#666;margin-top:4px">JPG, PNG до 2MB — или избери икона по-долу</div>
+          </div>
+        </div>
+        <div class="form-label" style="margin-top:8px">Икона (ако няма снимка)</div>
         <div class="emoji-pick" id="emoji-pick"></div>
       </div>
       <div class="form-grid">
@@ -1324,14 +1337,75 @@ const MODES = {
 
 const EMOJIS = ['🏺','🧭','🏛️','⚔️','🔮','📜','💎','🗡️','🛡️','⚗️','🔱','🪙','🗿','🧱'];
 
-let artifacts = [
-  { id:'A-102', name:'Керамичен Питос',    mat:'Глина',   date:'2024-03-20', gps:'43.2046°N 27.9105°E', discoverer:'Dr. Ivanova',  img:'🏺', mode:'CERAMIC', likes:14, comments:[{user:'Prof. Kolev',text:'Отличен образец.'}] },
-  { id:'B-054', name:'Римски Секстант',    mat:'Бронз',   date:'2024-03-21', gps:'43.2051°N 27.9112°E', discoverer:'Dr. Petrov',   img:'🧭', mode:'METAL',   likes:22, comments:[] },
-  { id:'C-221', name:'Амфора - Фрагмент', mat:'Керамика',date:'2024-03-19', gps:'43.2041°N 27.9098°E', discoverer:'M. Georgieva', img:'🏛️',mode:'CERAMIC', likes:8,  comments:[] },
-  { id:'M-991', name:'Железен Накрайник', mat:'Желязо',  date:'2024-03-22', gps:'43.2059°N 27.9121°E', discoverer:'K. Stanchev',  img:'⚔️',mode:'METAL',   likes:31, comments:[] },
-  { id:'G-033', name:'Стъклена Флакончета',mat:'Стъкло', date:'2024-03-23', gps:'43.2038°N 27.9089°E', discoverer:'Dr. Ivanova',  img:'🔮', mode:'GLASS',   likes:19, comments:[] },
-  { id:'S-770', name:'Каменна Плочка',    mat:'Камък',   date:'2024-03-18', gps:'43.2062°N 27.9130°E', discoverer:'Prof. Kolev',  img:'📜', mode:'STONE',   likes:11, comments:[] },
+// ─── SUPABASE ─────────────────────────────────────────────────────────────────
+const SUPABASE_URL  = 'https://pbknxnckgeynczqssiwa.supabase.co';
+const SUPABASE_KEY  = 'sb_publishable_kRxBlciysxugngWUBGdNlg_iUKfzoNT';
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const DEFAULT_ARTIFACTS = [
+  { id:'A-102', name:'Керамичен Питос',    mat:'Глина',   date:'2024-03-20', gps:'43.2046°N 27.9105°E', discoverer:'Dr. Ivanova',  img:'🏺', photo:null, mode:'CERAMIC', likes:14, comments:[{user:'Prof. Kolev',text:'Отличен образец.'}] },
+  { id:'B-054', name:'Римски Секстант',    mat:'Бронз',   date:'2024-03-21', gps:'43.2051°N 27.9112°E', discoverer:'Dr. Petrov',   img:'🧭', photo:null, mode:'METAL',   likes:22, comments:[] },
+  { id:'C-221', name:'Амфора - Фрагмент', mat:'Керамика',date:'2024-03-19', gps:'43.2041°N 27.9098°E', discoverer:'M. Georgieva', img:'🏛️',photo:null, mode:'CERAMIC', likes:8,  comments:[] },
+  { id:'M-991', name:'Железен Накрайник', mat:'Желязо',  date:'2024-03-22', gps:'43.2059°N 27.9121°E', discoverer:'K. Stanchev',  img:'⚔️',photo:null, mode:'METAL',   likes:31, comments:[] },
+  { id:'G-033', name:'Стъклена Флакончета',mat:'Стъкло', date:'2024-03-23', gps:'43.2038°N 27.9089°E', discoverer:'Dr. Ivanova',  img:'🔮', photo:null, mode:'GLASS',   likes:19, comments:[] },
+  { id:'S-770', name:'Каменна Плочка',    mat:'Камък',   date:'2024-03-18', gps:'43.2062°N 27.9130°E', discoverer:'Prof. Kolev',  img:'📜', photo:null, mode:'STONE',   likes:11, comments:[] },
 ];
+
+let artifacts = [...DEFAULT_ARTIFACTS];
+
+const USERS = {
+  'admin':    'admin123',
+  'drpetrov': 'petrov456',
+};
+
+async function loadArtifacts() {
+  try {
+    const { data, error } = await sb.from('artifacts').select('*').order('date', { ascending: false });
+    if (error) throw error;
+    if (data && data.length > 0) {
+      artifacts = data.map(a => ({
+        ...a,
+        comments: Array.isArray(a.comments) ? a.comments : [],
+        photo: a.photo || null,
+      }));
+    } else {
+      // Първо зареждане — запази default артефактите в Supabase
+      for (const a of DEFAULT_ARTIFACTS) {
+        await sb.from('artifacts').upsert(a);
+      }
+    }
+  } catch(e) {
+    console.warn('Supabase недостъпен, зареждам от localStorage:', e);
+    const saved = localStorage.getItem('archeoiot_artifacts');
+    if (saved) artifacts = JSON.parse(saved);
+  }
+  renderArtifacts();
+  renderReportArtifacts();
+  renderMap();
+}
+
+async function saveArtifactToCloud(a) {
+  try {
+    const { error } = await sb.from('artifacts').upsert({
+      id: a.id, name: a.name, mat: a.mat, date: a.date,
+      gps: a.gps, discoverer: a.discoverer, img: a.img,
+      photo: a.photo || null, mode: a.mode,
+      likes: a.likes, comments: a.comments
+    });
+    if (error) throw error;
+  } catch(e) {
+    console.warn('Cloud save failed, using localStorage:', e);
+    localStorage.setItem('archeoiot_artifacts', JSON.stringify(artifacts));
+  }
+}
+
+async function deleteArtifactFromCloud(id) {
+  try {
+    await sb.from('artifacts').delete().eq('id', id);
+  } catch(e) {
+    localStorage.setItem('archeoiot_artifacts', JSON.stringify(artifacts));
+  }
+}
 
 const archiveData = [
   { id:'ARC-001', name:'Бронзова Фибула', mat:'Бронз',  img:'🔱', mode:'METAL',   startTds:16.0, endTds:0.4,  startDate:'2024-01-10', endDate:'2024-01-14', discoverer:'Dr. Petrov',   gps:'43.2044°N 27.9100°E', notes:'Успешно завършена десалинация.',   outcome:'success' },
@@ -1355,10 +1429,6 @@ let tdsChart      = null;
 let offlineTimer  = null;
 
 // ─── LOGIN ────────────────────────────────────────────────────────────────────
-const USERS = {
-  'admin':    'admin123',
-  'drpetrov': 'petrov456',
-};
 
 function doLogin() {
   const id = document.getElementById('login-id').value.trim();
@@ -1388,10 +1458,8 @@ function doLogout() {
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 function initAll() {
   initChart();
-  renderArtifacts();
+  loadArtifacts(); // зарежда от Supabase
   renderArchive();
-  renderReportArtifacts();
-  renderMap();
   renderMatrix();
   renderSysInfo();
   setMode(activeMode);
@@ -1417,57 +1485,58 @@ function updateSession() {
   document.getElementById('data-count').textContent    = sensorHistory.length;
 }
 
-// ─── WEBSOCKET ────────────────────────────────────────────────────────────────
+// ─── MQTT ─────────────────────────────────────────────────────────────────────
+// СМЕНИ TOPIC-А на нещо уникално за теб!
+const MQTT_TOPIC = 'archeoiot/abc123xyz';
+let mqttClient = null;
+
 function connectWS(url) {
-  if (ws) { try { ws.close(); } catch(e){} }
-  ws = new WebSocket(url);
-  document.getElementById('ws-url-label').textContent = url + ' — reconnect на всеки 5 сек';
+  // url параметърът вече не се използва - свързваме се към HiveMQ
+  document.getElementById('ws-url-label').textContent = 'MQTT: broker.hivemq.com // topic: ' + MQTT_TOPIC;
 
-  ws.onopen = () => {
-    setEspStatus(true);
-    clearTimeout(offlineTimer);
-  };
+  if (mqttClient) { try { mqttClient.end(); } catch(e){} }
 
-  ws.onmessage = (e) => {
+  mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
+    clientId: 'archeoiot_web_' + Math.random().toString(16).slice(2,8),
+    clean: true,
+    reconnectPeriod: 5000,
+  });
+
+  mqttClient.on('connect', () => {
+    setEspStatus(false); // офлайн докато не дойде съобщение
+    mqttClient.subscribe(MQTT_TOPIC);
+  });
+
+  mqttClient.on('message', (topic, message) => {
     try {
-      const d = JSON.parse(e.data);
-      if (d.relayAck) return;
-
+      const d = JSON.parse(message.toString());
       clearTimeout(offlineTimer);
-      offlineTimer = setTimeout(()=>setEspStatus(false), 10000);
+      offlineTimer = setTimeout(() => setEspStatus(false), 15000);
       setEspStatus(true);
 
       const row = {
-        time:  new Date().toLocaleTimeString('bg-BG',{hour:'2-digit',minute:'2-digit',second:'2-digit'}),
-        tds:   parseFloat(d.tds)  || 0,
-        ec:    parseFloat(d.ec)   || 0,
-        temp:  parseFloat(d.temp) || 0,
-        wl:    parseFloat(d.wl)   || 85,
+        time: new Date().toLocaleTimeString('bg-BG', {hour:'2-digit', minute:'2-digit', second:'2-digit'}),
+        tds:  parseFloat(d.tds)  || 0,
+        ec:   parseFloat(d.ec)   || 0,
+        temp: parseFloat(d.temp) || 0,
+        wl:   parseFloat(d.wl)   || 85,
       };
       sensorHistory = [...sensorHistory, row].slice(-40);
-
-      if (d.r1 !== undefined)
-        relayState = { r1:!!d.r1, r2:!!d.r2, r3:!!d.r3 };
 
       updateSensorUI(row);
       updateChart();
       updatePhase();
       updatePrediction();
       updateReportTable();
-      updateRelayUI();
-      if (autoMode) runAutoMode(row.tds);
     } catch(e) {}
-  };
+  });
 
-  ws.onerror  = () => setEspStatus(false);
-  ws.onclose  = () => {
-    setEspStatus(false);
-    setTimeout(()=>connectWS(document.getElementById('ws-input').value), 5000);
-  };
+  mqttClient.on('error', () => setEspStatus(false));
+  mqttClient.on('offline', () => setEspStatus(false));
 }
 
 function reconnectWS() {
-  connectWS(document.getElementById('ws-input').value);
+  connectWS(null);
 }
 
 function setEspStatus(online) {
@@ -1859,7 +1928,7 @@ function renderArtifacts() {
     const m=MODES[a.mode];
     return `
     <div class="artifact-card" onclick="openArtifact('${a.id}')">
-      <div class="artifact-emoji">${a.img}</div>
+      <div class="artifact-emoji" style="${a.photo?'padding:0':''}">${a.photo?'<img src="'+a.photo+'" style="width:100%;height:100%;object-fit:cover">':a.img}</div>
       <div class="artifact-info">
         <div class="artifact-id" style="color:${m.color}">${a.id}</div>
         <div class="artifact-name">${a.name}</div>
@@ -1886,7 +1955,7 @@ function openArtifact(id) {
   const m = MODES[a.mode];
   document.getElementById('art-modal-title').textContent = a.id+' // '+a.name;
   document.getElementById('art-modal-body').innerHTML = `
-    <div style="text-align:center;font-size:56px;padding:24px;background:var(--bg3);margin-bottom:16px;border:1px solid var(--border)">${a.img}</div>
+    <div style="text-align:center;font-size:56px;padding:${a.photo?'0':'24px'};background:var(--bg3);margin-bottom:16px;border:1px solid var(--border);overflow:hidden;max-height:200px">${a.photo?'<img src="'+a.photo+'" style="width:100%;max-height:200px;object-fit:cover">':a.img}</div>
     <div class="form-grid" style="margin-bottom:16px">
       ${[['Материал',a.mat],['Откривател',a.discoverer],['GPS',a.gps],['Дата',a.date],
          ['Протокол',m.name],['Target TDS',m.target+' ppt']].map(([l,v])=>`
@@ -1920,24 +1989,26 @@ function openArtifact(id) {
   openModal('art-modal');
 }
 
-function addComment(id) {
+async function addComment(id) {
   const inp = document.getElementById('cmt-'+id);
   if(!inp||!inp.value.trim()) return;
   const a = artifacts.find(x=>x.id===id);
   if(!a) return;
   a.comments.push({ user: operatorId||'Operator', text: inp.value });
   inp.value='';
+  await saveArtifactToCloud(a);
   openArtifact(id);
 }
 
-function likeArtifact(id) {
+async function likeArtifact(id) {
   const a = artifacts.find(x=>x.id===id);
-  if(a) { a.likes++; openArtifact(id); renderArtifacts(); }
+  if(a) { a.likes++; await saveArtifactToCloud(a); openArtifact(id); renderArtifacts(); }
 }
 
-function deleteArtifact(id) {
+async function deleteArtifact(id) {
   if(!confirm('Изтрий '+id+'?')) return;
   artifacts = artifacts.filter(x=>x.id!==id);
+  await deleteArtifactFromCloud(id);
   closeModal('art-modal');
   renderArtifacts();
   renderReportArtifacts();
@@ -1946,7 +2017,10 @@ function deleteArtifact(id) {
 
 // ─── ADD / EDIT ARTIFACT ──────────────────────────────────────────────────────
 function openAddArtifact() {
-  addForm = { img:'🏺', mode:'CERAMIC', isEdit:false, editId:null };
+  addForm = { img:'🏺', mode:'CERAMIC', isEdit:false, editId:null, photo:null };
+  document.getElementById('photo-preview').innerHTML = '🏺';
+  document.getElementById('photo-preview').style.padding = '';
+  const fi = document.getElementById('f-photo'); if(fi) fi.value='';
   document.getElementById('add-modal-title').textContent = '+ Нов Артефакт';
   document.getElementById('f-id').disabled  = false;
   document.getElementById('f-id').value     = '';
@@ -1963,7 +2037,10 @@ function openAddArtifact() {
 function openEditArtifact(id) {
   const a = artifacts.find(x=>x.id===id);
   if(!a) return;
-  addForm = { img:a.img, mode:a.mode, isEdit:true, editId:id };
+  addForm = { img:a.img, mode:a.mode, isEdit:true, editId:id, photo:a.photo||null };
+  const prev = document.getElementById('photo-preview');
+  if(a.photo){ prev.innerHTML='<img src="'+a.photo+'" style="width:100%;height:100%;object-fit:cover">'; prev.style.padding='0'; }
+  else { prev.innerHTML=a.img; prev.style.padding=''; }
   document.getElementById('add-modal-title').textContent = '✏ Редактирай // '+id;
   document.getElementById('f-id').disabled  = true;
   document.getElementById('f-id').value     = a.id;
@@ -1985,7 +2062,25 @@ function renderEmojiPick() {
 
 function pickEmoji(e) {
   addForm.img=e;
+  addForm.photo=null; // изчисти снимката ако е избрана икона
+  document.getElementById('photo-preview').innerHTML=e;
+  document.getElementById('photo-preview').style.padding='';
   renderEmojiPick();
+}
+
+function handlePhotoUpload(event) {
+  const file = event.target.files[0];
+  if(!file) return;
+  if(file.size > 2 * 1024 * 1024) { alert('Снимката е твърде голяма! Максимум 2MB.'); return; }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const base64 = e.target.result;
+    addForm.photo = base64;
+    const prev = document.getElementById('photo-preview');
+    prev.innerHTML = '<img src="'+base64+'" style="width:100%;height:100%;object-fit:cover">';
+    prev.style.padding = '0';
+  };
+  reader.readAsDataURL(file);
 }
 
 function renderAddProto() {
@@ -2002,7 +2097,7 @@ function pickAddMode(m) {
   renderAddProto();
 }
 
-function saveArtifact() {
+async function saveArtifact() {
   const id   = document.getElementById('f-id').value.trim();
   const name = document.getElementById('f-name').value.trim();
   const mat  = document.getElementById('f-mat').value.trim();
@@ -2010,13 +2105,24 @@ function saveArtifact() {
   const gps  = document.getElementById('f-gps').value.trim();
   const date = document.getElementById('f-date').value;
   if(!id||!name||!mat||!disc||!date) return;
+
+  const photo = addForm.photo || null;
+
   if(addForm.isEdit) {
     const a = artifacts.find(x=>x.id===addForm.editId);
-    if(a){ a.name=name;a.mat=mat;a.discoverer=disc;a.gps=gps;a.date=date;a.img=addForm.img;a.mode=addForm.mode; }
+    if(a){
+      a.name=name; a.mat=mat; a.discoverer=disc; a.gps=gps;
+      a.date=date; a.img=addForm.img; a.mode=addForm.mode;
+      if(photo) a.photo=photo;
+      await saveArtifactToCloud(a);
+    }
   } else {
     if(artifacts.find(x=>x.id===id)) { alert('ID вече съществува!'); return; }
-    artifacts.push({id,name,mat,date,gps,discoverer:disc,img:addForm.img,mode:addForm.mode,likes:0,comments:[]});
+    const newArt = {id,name,mat,date,gps,discoverer:disc,img:addForm.img,photo,mode:addForm.mode,likes:0,comments:[]};
+    artifacts.push(newArt);
+    await saveArtifactToCloud(newArt);
   }
+  addForm.photo = null;
   closeModal('add-modal');
   renderArtifacts();
   renderReportArtifacts();
